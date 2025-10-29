@@ -1,0 +1,359 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from windrose import WindroseAxes
+import matplotlib.cm as cm
+
+# ====================================================================
+# WIND ROSES BY POLLUTANT ANALYSIS
+# ====================================================================
+
+print("="*60)
+print("WIND ROSES BY POLLUTANT ANALYSIS")
+print("="*60)
+
+# Create a copy for analysis
+df_wind = df.copy()
+
+# 1. DATA PREPARATION
+print("\n1. DATA PREPARATION")
+print("-" * 40)
+
+# Convert pollutants to numeric
+pollutants = ['NO2', 'O3', 'PM10', 'SO2', 'CO']
+for pollutant in pollutants:
+    df_wind[pollutant] = pd.to_numeric(df_wind[pollutant], errors='coerce')
+
+# Clean wind data
+df_wind['WS'] = pd.to_numeric(df_wind['WS'], errors='coerce')
+df_wind = df_wind.dropna(subset=['WD', 'WS'])
+
+# Map wind directions to degrees
+wind_dir_map = {
+    'N': 0, 'NNE': 22.5, 'NE': 45, 'ENE': 67.5,
+    'E': 90, 'ESE': 112.5, 'SE': 135, 'SSE': 157.5,
+    'S': 180, 'SSO': 202.5, 'SO': 225, 'OSO': 247.5,
+    'O': 270, 'ONO': 292.5, 'NO': 315, 'NNO': 337.5
+}
+
+df_wind['WD_degrees'] = df_wind['WD'].map(wind_dir_map)
+df_wind = df_wind.dropna(subset=['WD_degrees'])
+
+print(f"Wind data available: {len(df_wind)} hours")
+print(f"Wind speed statistics:")
+print(f"  Mean: {df_wind['WS'].mean():.2f} m/s")
+print(f"  Max: {df_wind['WS'].max():.2f} m/s")
+print(f"  Min: {df_wind['WS'].min():.2f} m/s")
+print(f"  Calm (<0.5 m/s): {(df_wind['WS'] < 0.5).sum()} hours ({(df_wind['WS'] < 0.5).sum()/len(df_wind)*100:.1f}%)")
+
+# 2. BASIC WIND ROSES FOR EACH POLLUTANT
+print("\n2. GENERATING BASIC WIND ROSES BY POLLUTANT")
+print("-" * 40)
+
+# Create a figure with subplots for each pollutant
+fig = plt.figure(figsize=(20, 15))
+
+# Define concentration bins for each pollutant based on data percentiles
+pollutant_bins = {}
+
+for pollutant in pollutants:
+    if pollutant in df_wind.columns:
+        poll_data = df_wind[df_wind[pollutant].notna()]
+        if len(poll_data) > 0:
+            # Use percentiles to create appropriate bins for each pollutant
+            percentiles = [0, 25, 50, 75, 90, 95, 99]
+            bins = np.percentile(poll_data[pollutant], percentiles)
+            pollutant_bins[pollutant] = bins
+            print(f"{pollutant} bins: {bins}")
+
+pollutant_units = {
+    'NO2': 'μg/m³',
+    'O3': 'μg/m³', 
+    'PM10': 'μg/m³',
+    'SO2': 'μg/m³',
+    'CO': 'mg/m³'
+}
+
+# Plot wind roses
+for i, pollutant in enumerate(pollutants, 1):
+    # Filter data for current pollutant
+    poll_data = df_wind[df_wind[pollutant].notna()]
+    
+    if len(poll_data) > 0:
+        ax = fig.add_subplot(2, 3, i, projection='windrose')
+        
+        # Use wind speed bins that match the data range
+        ws_bins = np.linspace(poll_data['WS'].min(), poll_data['WS'].max(), 6)
+        
+        # Create wind rose with proper bin handling
+        try:
+            ax.bar(poll_data['WD_degrees'], poll_data[pollutant], 
+                   normed=True, 
+                   bins=ws_bins,
+                   nsector=16,
+                   cmap=cm.viridis,
+                   opening=0.8)
+            
+            ax.set_legend()
+            ax.set_title(f'{pollutant} Concentration by Wind Direction\n({pollutant_units[pollutant]})', 
+                        fontsize=12, fontweight='bold')
+            
+            print(f"Generated wind rose for {pollutant}: {len(poll_data)} data points")
+            
+        except Exception as e:
+            print(f"Error creating wind rose for {pollutant}: {e}")
+            # Create a simple frequency wind rose instead
+            ax.bar(poll_data['WD_degrees'], poll_data['WS'], 
+                   normed=True, 
+                   bins=6,
+                   nsector=16,
+                   cmap=cm.Blues,
+                   opening=0.8)
+            ax.set_title(f'Wind Frequency - {pollutant} Data Available', fontsize=12)
+
+plt.tight_layout()
+plt.show()
+
+# 3. DETAILED SECTOR ANALYSIS
+print("\n3. DETAILED SECTOR ANALYSIS")
+print("-" * 40)
+
+# Define sectors for detailed analysis
+sectors = {
+    'N': [337.5, 22.5],
+    'NE': [22.5, 67.5],
+    'E': [67.5, 112.5],
+    'SE': [112.5, 157.5],
+    'S': [157.5, 202.5],
+    'SW': [202.5, 247.5],
+    'W': [247.5, 292.5],
+    'NW': [292.5, 337.5]
+}
+
+def get_sector(degrees):
+    """Convert degrees to sector"""
+    for sector, (min_deg, max_deg) in sectors.items():
+        if min_deg <= degrees < max_deg:
+            return sector
+    return 'N'  # Default for 0 degrees
+
+df_wind['sector'] = df_wind['WD_degrees'].apply(get_sector)
+
+# Analyze pollution by sector
+print("\nPOLLUTION BY WIND SECTOR:")
+for pollutant in pollutants:
+    if pollutant in df_wind.columns:
+        sector_stats = df_wind.groupby('sector')[pollutant].agg(['mean', 'count', 'max']).round(2)
+        max_sector = sector_stats['mean'].idxmax()
+        max_value = sector_stats['mean'].max()
+        min_sector = sector_stats['mean'].idxmin()
+        min_value = sector_stats['mean'].min()
+        
+        print(f"\n{pollutant}:")
+        print(f"  Highest concentrations from: {max_sector} ({max_value} {pollutant_units[pollutant]})")
+        print(f"  Lowest concentrations from: {min_sector} ({min_value} {pollutant_units[pollutant]})")
+        
+        # Print top 3 sectors
+        top_sectors = sector_stats.nlargest(3, 'mean')
+        print(f"  Top 3 sectors:")
+        for sector, row in top_sectors.iterrows():
+            print(f"    {sector}: {row['mean']} {pollutant_units[pollutant]} ({row['count']} hours)")
+
+# 4. WIND SPEED AND POLLUTION ANALYSIS
+print("\n4. WIND SPEED AND POLLUTION RELATIONSHIP")
+print("-" * 40)
+
+# Define wind speed categories
+def wind_speed_category(ws):
+    if ws < 1: return 'Calm (<1 m/s)'
+    elif ws < 3: return 'Light (1-3 m/s)'
+    elif ws < 5: return 'Moderate (3-5 m/s)'
+    else: return 'Strong (>5 m/s)'
+
+df_wind['ws_category'] = df_wind['WS'].apply(wind_speed_category)
+
+print("POLLUTION BY WIND SPEED CATEGORY:")
+for pollutant in pollutants:
+    if pollutant in df_wind.columns:
+        ws_stats = df_wind.groupby('ws_category')[pollutant].mean().round(2)
+        print(f"\n{pollutant}:")
+        for category, value in ws_stats.items():
+            print(f"  {category}: {value} {pollutant_units[pollutant]}")
+
+# 5. SOURCE IDENTIFICATION ANALYSIS
+print("\n5. SOURCE IDENTIFICATION")
+print("-" * 40)
+
+print("POTENTIAL POLLUTION SOURCES:")
+
+# Analyze high concentration events
+high_pollution_thresholds = {
+    'NO2': 50,    # μg/m³
+    'PM10': 75,   # μg/m³
+    'SO2': 20,    # μg/m³
+    'CO': 2.0,    # mg/m³
+    'O3': 100     # μg/m³
+}
+
+for pollutant, threshold in high_pollution_thresholds.items():
+    if pollutant in df_wind.columns:
+        high_pollution = df_wind[df_wind[pollutant] > threshold]
+        if len(high_pollution) > 0:
+            high_poll_sectors = high_pollution['sector'].value_counts()
+            dominant_sector = high_poll_sectors.index[0] if len(high_poll_sectors) > 0 else 'N/A'
+            dominant_percent = high_poll_sectors.iloc[0] / len(high_pollution) * 100 if len(high_poll_sectors) > 0 else 0
+            
+            print(f"\n{pollutant} (>{threshold} {pollutant_units[pollutant]}):")
+            print(f"  Total high pollution hours: {len(high_pollution)}")
+            print(f"  Dominant wind sector during high pollution: {dominant_sector} ({dominant_percent:.1f}%)")
+            
+            # Print sector distribution
+            print(f"  Sector distribution:")
+            for sector, count in high_poll_sectors.head(3).items():
+                percent = count / len(high_pollution) * 100
+                print(f"    {sector}: {count} hours ({percent:.1f}%)")
+
+# 6. SIMPLIFIED WIND ROSES WITH FIXED BINS
+print("\n6. SIMPLIFIED WIND ROSE ANALYSIS")
+print("-" * 40)
+
+# Create enhanced wind roses with fixed bins
+fig2 = plt.figure(figsize=(20, 12))
+
+# Use fixed wind speed bins that work with the data
+ws_min = df_wind['WS'].min()
+ws_max = df_wind['WS'].max()
+fixed_ws_bins = np.linspace(ws_min, ws_max, 6)
+
+print(f"Using fixed wind speed bins: {fixed_ws_bins}")
+
+for i, pollutant in enumerate(['NO2', 'PM10', 'O3'], 1):
+    poll_data = df_wind[df_wind[pollutant].notna()]
+    
+    if len(poll_data) > 0:
+        ax = fig2.add_subplot(2, 3, i, projection='windrose')
+        
+        try:
+            ax.bar(poll_data['WD_degrees'], poll_data[pollutant], 
+                   normed=True, 
+                   bins=fixed_ws_bins,
+                   nsector=16,
+                   cmap=cm.plasma,
+                   opening=0.8)
+            
+            ax.set_legend(title=f'{pollutant} ({pollutant_units[pollutant]})')
+            ax.set_title(f'{pollutant} Concentration\nby Wind Direction', 
+                        fontsize=12, fontweight='bold')
+            
+        except Exception as e:
+            print(f"Error in advanced plot for {pollutant}: {e}")
+            # Fallback to simple wind frequency
+            ax.bar(poll_data['WD_degrees'], poll_data['WS'], 
+                   normed=True, 
+                   bins=6,
+                   nsector=16,
+                   cmap=cm.Blues,
+                   opening=0.8)
+            ax.set_title(f'Wind Frequency - {pollutant}', fontsize=12)
+
+# Add summary statistics plot
+ax_summary = fig2.add_subplot(2, 3, 4)
+
+# Calculate mean concentrations by sector for main pollutants
+sector_data = []
+for pollutant in ['NO2', 'PM10', 'O3']:
+    if pollutant in df_wind.columns:
+        sector_means = df_wind.groupby('sector')[pollutant].mean()
+        for sector, value in sector_means.items():
+            sector_data.append({
+                'Pollutant': pollutant,
+                'Sector': sector,
+                'Concentration': value,
+                'Unit': pollutant_units[pollutant]
+            })
+
+sector_df = pd.DataFrame(sector_data)
+
+# Create heatmap of concentrations by sector and pollutant
+if not sector_df.empty:
+    pivot_data = sector_df.pivot(index='Sector', columns='Pollutant', values='Concentration')
+    # Reorder sectors clockwise
+    sector_order = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+    pivot_data = pivot_data.reindex(sector_order)
+    sns.heatmap(pivot_data, annot=True, cmap='YlOrRd', fmt='.1f', ax=ax_summary)
+    ax_summary.set_title('Mean Concentration by Wind Sector\n(μg/m³)', fontweight='bold')
+
+# Add wind frequency rose
+ax_freq = fig2.add_subplot(2, 3, 5, projection='windrose')
+ax_freq.bar(df_wind['WD_degrees'], df_wind['WS'], 
+           normed=True, 
+           bins=6,
+           nsector=16,
+           cmap=cm.Blues,
+           opening=0.8)
+ax_freq.set_legend(title='Wind Speed (m/s)')
+ax_freq.set_title('Wind Frequency Distribution', fontweight='bold')
+
+# Add pollution roses by season
+ax_season = fig2.add_subplot(2, 3, 6)
+
+# Define seasons
+def get_season(month):
+    if month in [12, 1, 2]: return 'Winter'
+    elif month in [3, 4, 5]: return 'Spring'
+    elif month in [6, 7, 8]: return 'Summer'
+    else: return 'Autumn'
+
+df_wind['season'] = df_wind['datetime'].dt.month.apply(get_season)
+
+# Plot seasonal NO2 by sector
+seasonal_no2 = df_wind.groupby(['season', 'sector'])['NO2'].mean().unstack()
+# Reorder seasons and sectors
+seasonal_no2 = seasonal_no2.reindex(index=['Winter', 'Spring', 'Summer', 'Autumn'],
+                                   columns=['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'])
+
+sns.heatmap(seasonal_no2, annot=True, cmap='YlOrRd', fmt='.1f', ax=ax_season)
+ax_season.set_title('Seasonal NO2 by Wind Sector\n(μg/m³)', fontweight='bold')
+
+plt.tight_layout()
+plt.show()
+
+# 7. KEY FINDINGS SUMMARY
+print("\n7. KEY FINDINGS SUMMARY")
+print("-" * 40)
+
+print("WIND-POLLUTION RELATIONSHIPS:")
+
+# Summary for each pollutant
+for pollutant in pollutants:
+    if pollutant in df_wind.columns:
+        # Find sectors with highest concentrations
+        sector_means = df_wind.groupby('sector')[pollutant].mean()
+        max_sector = sector_means.idxmax()
+        max_value = sector_means.max()
+        
+        # Find wind speeds with highest concentrations
+        ws_means = df_wind.groupby('ws_category')[pollutant].mean()
+        max_ws = ws_means.idxmax()
+        max_ws_value = ws_means.max()
+        
+        print(f"\n{pollutant}:")
+        print(f"  • Highest concentrations from: {max_sector} sector")
+        print(f"  • Peak levels during: {max_ws} winds")
+        print(f"  • Typical range: {df_wind[pollutant].min():.1f}-{df_wind[pollutant].max():.1f} {pollutant_units[pollutant]}")
+
+print("\nSOURCE IDENTIFICATION:")
+print("• High NO2/CO: Typically indicates traffic sources")
+print("• High SO2: Often indicates industrial/combustion sources") 
+print("• High PM10: Can indicate dust, construction, or regional transport")
+print("• O3 patterns: Typically show photochemical formation patterns")
+
+print("\nRECOMMENDATIONS:")
+print("• Monitor sectors with consistently high pollution for source identification")
+print("• Consider local topography and source locations relative to wind patterns")
+print("• Use seasonal patterns to identify different source contributions")
+
+print("\n" + "="*60)
+print("WIND ROSE ANALYSIS COMPLETE")
+print("="*60)
